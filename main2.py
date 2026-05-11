@@ -32,48 +32,63 @@ resumes = [
     {"id": "01", "name": "Arjun Sharma", "skills": "Pyhton, MachineLearning, SQL, pandas, numpy, Deep-learning"},
     {"id": "02", "name": "Priya Nair", "skills": "JavaScrpit, Reacts, Node.JS, MongoDb, REST api, HTML/CSS"},
     {"id": "03", "name": "Rahul Gupta", "skills": "Java, Spring Boot, MySql, Microservices, Docker, kubernates"},
-    {"id": "04", "name": "Sneha Patel", "skills": "Python, TensorFlow, Keras, NLP, BERT, data-viz, matpl""0otlib"},
+    {"id": "04", "name": "Sneha Patel", "skills": "Python, TensorFlow, Keras, NLP, BERT, data-viz, matplotlib"},
     {"id": "05", "name": "Vikram Singh", "skills": "C++, Algoritms, Data Structure, competitive programming, python"},
     {"id": "06", "name": "Ananya Krishnan", "skills": "javascript, vue.js, python, flask, PostgreSQL, AWS, CI/CD"},
     {"id": "07", "name": "Karan Mehta", "skills": "Python, Sklearn, XGboost, feature engineering, SQL, tableau"},
     {"id": "08", "name": "Deepika Rao", "skills": "Java, Android, Kotlin, Firebase, REST, UI/UX, figma"},
     {"id": "09", "name": "Aditya Kumar", "skills": "Reactjs, TypeScrpit, GraphQL, redux, tailwind, nodejs, jest"},
     {"id": "10", "name": "Meera Iyer", "skills": "python, R, statistics, ML, regression, clustering, Power-BI"}
-# {"id": "11", "name": "Perfect Backend Dev", "skills": "Java, Spring Boot, MySQL, PostgreSQL, Microservices, Docker, Kubernetes, REST API, CI/CD, Redis"}
 ]
 
 jds = [
-    {"id": "JD-1", "company": "Kakao", "skills": "Python, Machine Learning, Deep Learning, TensorFlow, PyTorch, SQL, Data Visualization, NLP, BERT, Feature Engineering, Statistics"},
-    {"id": "JD-2", "company": "Naver", "skills": "Java, Spring Boot, MySQL, PostgreSQL, Microservices, Docker, Kubernetes, REST API, CI/CD, Redis"},
-    {"id": "JD-3", "company": "Line", "skills": "JavaScript, React, Vue, TypeScript, REST API, HTML/CSS, Node.js, GraphQL, Redux, Jest, AWS"}
-# {"id": "JD-4", "company": "Samsung (Noida)", "skills": "Python, Machine Learning, Statistics, SQL, Data Visualization, R"}
-
+    {"id": "JD-1", "company": "Kakao", "role": "ML Engineer",
+     "skills": "Python, Machine Learning, Deep Learning, TensorFlow, PyTorch, SQL, Data Visualization, NLP, BERT, Feature Engineering, Statistics"},
+    {"id": "JD-2", "company": "Naver", "role": "Backend Engineer",
+     "skills": "Java, Spring Boot, MySQL, PostgreSQL, Microservices, Docker, Kubernetes, REST API, CI/CD, Redis"},
+    {"id": "JD-3", "company": "Line", "role": "Frontend Engineer",
+     "skills": "JavaScript, React, Vue, TypeScript, REST API, HTML/CSS, Node.js, GraphQL, Redux, Jest, AWS"}
 ]
+
+
+# --- Processing Functions ---
 
 def normalize_skills(raw_string):
     raw_string = raw_string.lower()
-    multi_word = sorted([k for k in SKILL_ALIASES.keys() if " " in k or "-" in k or "/" in k or "." in k], key=len,reverse=True)
-    normalized = []
+    # Step 1: Split by comma
     tokens = [t.strip() for t in raw_string.split(',')]
-
+    normalized = []
     for token in tokens:
+        # Step 2: Discard tokens not in map, otherwise apply alias
         if token in SKILL_ALIASES:
             normalized.append(SKILL_ALIASES[token])
-
+    # Step 3: Deduplicate
     return list(dict.fromkeys(normalized))
 
+
+def get_cosine(vec_a, vec_b):
+    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    norm_a = math.sqrt(sum(a ** 2 for a in vec_a))
+    norm_b = math.sqrt(sum(b ** 2 for b in vec_b))
+    return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+
+
+# --- Workflow Execution ---
+
+# 1. Clean Resumes
 for r in resumes:
     r['clean_skills'] = normalize_skills(r['skills'])
 
+# 2. Build Shared Vocabulary
 vocab = set()
 for r in resumes:
     vocab.update(r['clean_skills'])
 vocab = sorted(list(vocab))
 
+# 3. Compute TF-IDF only for Resumes
 num_resumes = 10
 df_map = {skill: sum(1 for r in resumes if skill in r['clean_skills']) for skill in vocab}
 idf_map = {skill: math.log(num_resumes / df_map[skill]) for skill in vocab}
-
 
 resume_vectors = []
 for r in resumes:
@@ -87,26 +102,37 @@ for r in resumes:
             vector.append(0.0)
     resume_vectors.append(vector)
 
-
-def get_cosine(vec_a, vec_b):
-    dot = sum(a * b for a, b in zip(vec_a, vec_b))
-    norm_a = math.sqrt(sum(a ** 2 for a in vec_a))
-    norm_b = math.sqrt(sum(b ** 2 for b in vec_b))
-    return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
-
-
-for jd in jds:
+# 4. Global Matching & Unique Assignment Logic
+# Calculate all possible score pairs first
+all_match_pairs = []
+for jd_idx, jd in enumerate(jds):
     jd_skills = normalize_skills(jd['skills'])
     jd_vector = [1 if skill in jd_skills else 0 for skill in vocab]
 
-    results = []
-    for i, r in enumerate(resumes):
-        score = get_cosine(resume_vectors[i], jd_vector)
-        results.append({"name": r['name'], "score": round(score, 2)})
+    for res_idx, r in enumerate(resumes):
+        score = get_cosine(resume_vectors[res_idx], jd_vector)
+        all_match_pairs.append({
+            "candidate_name": r['name'],
+            "jd_id": jd['id'],
+            "company_role": f"{jd['company']} ({jd['role']})",
+            "score": round(score, 2)
+        })
 
-    # Tie-break: Score desc, then Name asc
-    sorted_results = sorted(results, key=lambda x: (-x['score'], x['name']))
+# Sort by Score (Desc), then Candidate Name (Asc) for ties
+all_match_pairs.sort(key=lambda x: (-x['score'], x['candidate_name']))
 
-    top_3 = [f"{res['name']}({res['score']:.2f})" for res in sorted_results[:3]]
-    print(f"{jd['id']} — {jd['company']} ({jd['id'].replace('JD-', '')})")  # Formatting fix
-    print(", ".join(top_3))
+# Assign candidates to JDs globally (One job per person)
+assigned_candidates = set()
+jd_top_three = {jd['id']: [] for jd in jds}
+
+for match in all_match_pairs:
+    # Check if JD still needs top 3 AND candidate hasn't been taken
+    if len(jd_top_three[match['jd_id']]) < 3 and match['candidate_name'] not in assigned_candidates:
+        jd_top_three[match['jd_id']].append(f"{match['candidate_name']}({match['score']:.2f})")
+        assigned_candidates.add(match['candidate_name'])
+
+# --- Final Output ---
+print("<<<<<<<<<< NON-INDEPENDENT AND UNIQUE RESULTS FOR EVERY JD ACCORDING TO EXPERTISE >>>>>>>>")
+for jd in jds:
+    print(f"{jd['id']} — {jd['company']} ({jd['role']})")
+    print(", ".join(jd_top_three[jd['id']]))
